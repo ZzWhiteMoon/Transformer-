@@ -1,0 +1,57 @@
+import torch
+import torch.nn as nn
+
+# 加上nn.Module，意味着继承了nn.Module，不需要手动管理参数了
+class ResidualConnection(nn.Module):
+    def __init__(self, dropout=0.1):
+        '''
+        残差链接，在每个子层后添加残差连接和dropout
+        参数：dropout概率，在残差连接之前应用于子层输出，防止过拟合
+        '''
+        super(ResidualConnection, self).__init__()
+        self.dropout = nn.Dropout(p = dropout)
+
+    def forward(self, x, sublayer):
+        """
+        前向传播函数
+
+        参数：
+            x 残差连接输入的张量，形状为（batch_size, seq_len, d_model）
+            sublayer: 子层模块的函数，多头注意力或者前馈网络
+        """
+        return x + self.dropout(sublayer(x))
+    
+class LayerNorm(nn.Module):
+    def __init__(self, feature_size, epsilon = 1e-9):
+        """
+        层归一化，对最后一个维度进行归一化
+
+        参数：
+            feature_size: 输入特征的维度
+            epsilon: 防止除数为0
+        """
+        super(LayerNorm, self).__init__()
+        self.gemma = nn.Parameter(torch.ones(feature_size))     # 缩放
+        self.beta = nn.Parameter(torch.zeros(feature_size))     # 偏移
+        # Parameter是torch库中的子类，用于告诉nn.module把它当作 可训练参数 看待
+        # 定义后gemma和beta就会加入到model.parameter()中，由优化器在反向传播时更新值
+        self.epsilon = epsilon
+
+    def forward(self,x):
+        # x.mean & x.std都是torch上的方法，计算张量的统计量
+        # dim代表在哪个维度上操作，-1代表最后一个维度
+        mean = x.mean(dim=-1, keepdim=True)
+        std = x.std(dim=-1, keepdim=True)
+        return self.gemma * (x-mean) / (std + self.epsilon) + self.beta
+    
+class SubLayerConnection(nn.Module):
+    def __init__(self, feature_size, dropout = 0.1, epsilon=1e-9):
+        """
+        包括残差链接和层归一化
+        """
+        super(SubLayerConnection,self).__init__()
+        self.residual = ResidualConnection(dropout)
+        self.LN = LayerNorm(feature_size, epsilon)
+    
+    def forward(self,x, sublayer):
+        return self.LN(self.residual(x,sublayer)) # 因为是nn.Module的子类，不需要显式去写self.LN.forward()了
